@@ -88,6 +88,8 @@ spec:
         source /utils.sh
         trap 'handle_error $(results.TEST_OUTPUT.path)' EXIT
 
+        echo "It's the demo—I updated the pruning check..."
+
         IMAGE_URL="${IMAGE_URL}@${IMAGE_DIGEST}"
         # Given a tag and a the digest in the IMAGE_URL we opt to use the digest alone
         # this is because containers/image currently doesn't support image references

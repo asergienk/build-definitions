@@ -1,0 +1,142 @@
+---
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  labels:
+    app.kubernetes.io/version: "0.1"
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.12.1"
+    tekton.dev/tags: "konflux"
+  name: supported-resources-operator-bundle-check
+spec:
+  description: >-
+    This task validates an operator bundle image to ensure all manifests contain only allowed Kubernetes resource kinds, based on OLM's supported resources list.
+  params:
+    - name: IMAGE_DIGEST
+      description: Image digest to scan.
+    - name: IMAGE_URL
+      description: Image URL.
+  results:
+    - name: TEST_OUTPUT
+      description: Tekton task test output.
+  steps:
+    - name: validate-bundle-manifests
+      image: quay.io/redhat-appstudio/konflux-test:v1.4.31@sha256:a7cae9e96663e277a3904d0c78630508ddb6cc8eebaa912a840bd20f68dcaad1
+      computeResources:
+        limits:
+          memory: 8Gi
+        requests:
+          memory: 8Gi
+          cpu: 500m
+      env:
+        - name: IMAGE_URL
+          value: $(params.IMAGE_URL)
+        - name: IMAGE_DIGEST
+          value: $(params.IMAGE_DIGEST)
+      securityContext:
+        capabilities:
+          add:
+            - SETFCAP
+      script: |
+        #!/usr/bin/env bash
+        set -euo pipefail
+        # shellcheck source=/dev/null
+        . /utils.sh
+        trap 'handle_error $(results.TEST_OUTPUT.path)' EXIT
+
+        image_without_tag=$(echo -n "${IMAGE_URL}" | sed "s/\(.*\):.*/\1/")
+        # strip new-line escape symbol from parameter and save it to variable
+        image_and_digest="${image_without_tag}@${IMAGE_DIGEST}"
+
+        image_and_digest_labels=$(get_image_labels "${image_and_digest}")
+        if ! echo "${image_and_digest_labels}" | grep -q '^operators.operatorframework.io.bundle.mediatype.v1='; then
+          echo "The image $image_and_digest is not an operator bundle. Skipping supported resources check..."
+          note="Task $(context.task.name) skipped: The image $image_and_digest is not an operator bundle."
+          TEST_OUTPUT=$(make_result_json -r SKIPPED -t "$note")
+          echo "${TEST_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
+
+        # Allowed kinds from OLM source https://github.com/operator-framework/operator-lifecycle-manager/blob/9958a87b38ca5ce0269c0cbec0636ec4764a61dc/pkg/controller/operators/catalog/supportedresources.go#L4-L13
+        allowed_kinds=(
+          "PrometheusRule"
+          "ServiceMonitor"
+          "PodDisruptionBudget"
+          "PriorityClass"
+          "VerticalPodAutoscaler"
+          "ConsoleYAMLSample"
+          "ConsoleQuickStart"
+          "ConsoleCLIDownload"
+          "ConsolePlugin"
+        )
+
+        echo "Copying image ${image_and_digest} to OCI layout..."
+        if ! retry skopeo copy --remove-signatures "docker://${image_and_digest}" "oci:///tekton/home/oci-bundle-image:latest"; then
+          echo "Error: Could not convert image ${image_and_digest} to OCI format"
+          note="Task $(context.task.name) failed: Could not convert image ${image_and_digest} to OCI format."
+          TEST_OUTPUT=$(make_result_json -r ERROR -t "$note")
+          echo "${TEST_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
+
+        echo "Unpacking OCI image..."
+        if ! retry umoci raw unpack --rootless --image "/tekton/home/oci-bundle-image:latest" "/tekton/home/unpacked-oci-bundle-image"; then
+          echo "Error: Could not unpack OCI image"
+          note="Task $(context.task.name) failed: Could not unpack OCI image."
+          TEST_OUTPUT=$(make_result_json -r ERROR -t "$note")
+          echo "${TEST_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
+
+        echo "Validating manifests against allowlist..."
+        manifest_dir="/tekton/home/unpacked-oci-bundle-image/rootfs/manifests"
+
+        if [[ ! -d "$manifest_dir" ]]; then
+          echo "Error: Manifests directory not found at ${manifest_dir}"
+          note="Task $(context.task.name) failed: Manifests directory not found at ${manifest_dir}."
+          TEST_OUTPUT=$(make_result_json -r ERROR -t "$note")
+          echo "${TEST_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
+
+        shopt -s nullglob
+        files=("$manifest_dir"/*.yaml "$manifest_dir"/*.yml)
+        if [[ ${#files[@]} -eq 0 ]]; then
+          echo "Error: No YAML manifests found in ${manifest_dir}"
+          note="Task $(context.task.name) failed: No YAML manifests found in ${manifest_dir}."
+          TEST_OUTPUT=$(make_result_json -r ERROR -t "$note")
+          echo "${TEST_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+          exit 0
+        fi
+
+        # Loop through YAML files and check each "kind" field
+        invalid_found=0
+        for file in "${files[@]}"; do
+          # Extract first kind value, ignoring indentation
+          kind=$(grep -E '^[[:space:]]*kind:' "$file" | awk '{print $2}' | head -n 1 || true)
+          if [[ -n "$kind" ]]; then
+            allowed=false
+            for k in "${allowed_kinds[@]}"; do
+              if [[ "$kind" == "$k" ]]; then
+                allowed=true
+                break
+              fi
+            done
+            if [[ "$allowed" == false ]]; then
+              echo "Disallowed kind found: $kind in $file"
+              ((invalid_found++))
+            fi
+          fi
+        done
+
+        if [[ "$invalid_found" -eq 0 ]]; then
+          echo "All manifests use allowed kinds."
+          note="Task $(context.task.name) succeeded: All manifests use allowed kinds."
+          TEST_OUTPUT=$(make_result_json -r SUCCESS -s 1 -t "${note}")
+          echo "${TEST_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+        else
+          echo "One or more manifests contain disallowed kinds."
+          note="Task $(context.task.name) failed: One or more manifests contain disallowed kinds."
+          ERROR_OUTPUT=$(make_result_json -r FAILURE -f $invalid_found -s 0 -t "${note}")
+          echo "${ERROR_OUTPUT}" | tee "$(results.TEST_OUTPUT.path)"
+        fi

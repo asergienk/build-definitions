@@ -111,6 +111,7 @@
         "task/sast-unicode-check-oci-ta/**",
         "task/sast-unicode-check/**",
         "task/sbom-json-check/**",
+        "task/supported-resources-operator-bundle-check/**",
         "task/validate-fbc/**"
       ]
     },

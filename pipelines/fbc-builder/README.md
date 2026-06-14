@@ -12,14 +12,14 @@ This pipeline is pushed as a Tekton bundle to [quay.io](https://quay.io/reposito
 |build-image-index| Add built image into an OCI image index| true| build-image-index:0.3:ALWAYS_BUILD_INDEX|
 |build-platforms| List of platforms to build the container images on. The available set of values is determined by the configuration of the multi-platform-controller.| ['linux/x86_64']| |
 |build-source-image| Build a source image.| false| |
-|dockerfile| Path to the Dockerfile inside the context specified by parameter path-context| Dockerfile| build-images:0.10:DOCKERFILE|
+|dockerfile| Path to the Dockerfile inside the context specified by parameter path-context| Dockerfile| fbc-inject-lifecycle:0.1:DOCKERFILE ; build-images:0.10:DOCKERFILE|
 |enable-cache-proxy| Enable cache proxy configuration| false| init:0.4:enable-cache-proxy|
 |enable-package-registry-proxy| Use the package registry proxy when prefetching dependencies| true| prefetch-dependencies:0.3:enable-package-registry-proxy|
 |git-url| Source Repository URL| None| clone-repository:0.1:url|
 |hermetic| Execute the build with network isolation| true| build-images:0.10:HERMETIC|
-|image-expires-after| Image tag expiration time, time values could be something like 1h, 2d, 3w for hours, days, and weeks, respectively.| | clone-repository:0.1:ociArtifactExpiresAfter ; run-opm-command:0.1:ociArtifactExpiresAfter ; prefetch-dependencies:0.3:ociArtifactExpiresAfter ; build-images:0.10:IMAGE_EXPIRES_AFTER|
-|output-image| Fully Qualified Output Image| None| clone-repository:0.1:ociStorage ; run-opm-command:0.1:ociStorage ; prefetch-dependencies:0.3:ociStorage ; build-images:0.10:IMAGE ; build-image-index:0.3:IMAGE|
-|path-context| Path to the source code of an application's component from where to build image.| .| build-images:0.10:CONTEXT|
+|image-expires-after| Image tag expiration time, time values could be something like 1h, 2d, 3w for hours, days, and weeks, respectively.| | clone-repository:0.1:ociArtifactExpiresAfter ; run-opm-command:0.1:ociArtifactExpiresAfter ; prefetch-dependencies:0.3:ociArtifactExpiresAfter ; fbc-inject-lifecycle:0.1:ociArtifactExpiresAfter ; build-images:0.10:IMAGE_EXPIRES_AFTER|
+|output-image| Fully Qualified Output Image| None| clone-repository:0.1:ociStorage ; run-opm-command:0.1:ociStorage ; prefetch-dependencies:0.3:ociStorage ; fbc-inject-lifecycle:0.1:ociStorage ; build-images:0.10:IMAGE ; build-image-index:0.3:IMAGE|
+|path-context| Path to the source code of an application's component from where to build image.| .| fbc-inject-lifecycle:0.1:CONTEXT ; build-images:0.10:CONTEXT|
 |prefetch-input| Build dependencies to be prefetched| | prefetch-dependencies:0.3:input ; build-images:0.10:PREFETCH_INPUT|
 |revision| Revision of the Source Repository| | clone-repository:0.1:revision|
 |sast-target-dirs| Target directories in component's source code to scan with SAST tools. Multiple values should be separated with commas.| .| |
@@ -117,11 +117,15 @@ This pipeline is pushed as a Tekton bundle to [quay.io](https://quay.io/reposito
 ### fbc-fips-check-oci-ta:0.1 task parameters
 |name|description|default value|already set by|
 |---|---|---|---|
-|MAX_PARALLEL| Maximum number of images to process in parallel| 8| |
 |SOURCE_ARTIFACT| The Trusted Artifact URI pointing to the artifact with the application source code.| None| '$(tasks.prefetch-dependencies.results.SOURCE_ARTIFACT)'|
-|image-digest| Image digest to scan.| None| '$(tasks.build-image-index.results.IMAGE_DIGEST)'|
-|image-mirror-set-path| Path to the image mirror set file.| .tekton/images-mirror-set.yaml| |
-|image-url| Image URL.| None| '$(tasks.build-image-index.results.IMAGE_URL)'|
+### fbc-inject-lifecycle-oci-ta:0.1 task parameters
+|name|description|default value|already set by|
+|---|---|---|---|
+|CONTEXT| Path to the directory to use as context.| .| '$(params.path-context)'|
+|DOCKERFILE| Path to the Dockerfile to build.| ./Dockerfile| '$(params.dockerfile)'|
+|SOURCE_ARTIFACT| The Trusted Artifact URI pointing to the artifact with the application source code.| None| '$(tasks.run-opm-command.results.SOURCE_ARTIFACT)'|
+|ociArtifactExpiresAfter| Expiration date for the trusted artifacts. Empty string means no expiration.| None| '$(params.image-expires-after)'|
+|ociStorage| The OCI repository where the Trusted Artifacts are stored.| None| '$(params.output-image).lifecycle'|
 ### fbc-target-index-pruning-check:0.1 task parameters
 |name|description|default value|already set by|
 |---|---|---|---|

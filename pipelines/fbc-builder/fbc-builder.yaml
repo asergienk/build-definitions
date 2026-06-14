@@ -139,6 +139,23 @@ spec:
     taskRef:
       name: run-opm-command-oci-ta
       version: "0.1"
+  - name: fbc-inject-lifecycle
+    params:
+    - name: DOCKERFILE
+      value: $(params.dockerfile)
+    - name: CONTEXT
+      value: $(params.path-context)
+    - name: SOURCE_ARTIFACT
+      value: $(tasks.run-opm-command.results.SOURCE_ARTIFACT)
+    - name: ociStorage
+      value: $(params.output-image).lifecycle
+    - name: ociArtifactExpiresAfter
+      value: $(params.image-expires-after)
+    runAfter:
+    - run-opm-command
+    taskRef:
+      name: fbc-inject-lifecycle-oci-ta
+      version: "0.1"
   - name: prefetch-dependencies
     params:
     - name: input
@@ -146,13 +163,13 @@ spec:
     - name: enable-package-registry-proxy
       value: $(params.enable-package-registry-proxy)
     - name: SOURCE_ARTIFACT
-      value: $(tasks.run-opm-command.results.SOURCE_ARTIFACT)
+      value: $(tasks.fbc-inject-lifecycle.results.SOURCE_ARTIFACT)
     - name: ociStorage
       value: $(params.output-image).prefetch
     - name: ociArtifactExpiresAfter
       value: $(params.image-expires-after)
     runAfter:
-    - run-opm-command
+    - fbc-inject-lifecycle
     taskRef:
       name: prefetch-dependencies-oci-ta
       version: "0.3"
